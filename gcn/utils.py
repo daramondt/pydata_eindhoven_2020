@@ -1,5 +1,6 @@
 import scipy.sparse as sp
 import numpy as np
+from tensorflow.keras.utils import Sequence
 
 
 def encode_onehot(labels):
@@ -88,3 +89,70 @@ def evaluate_preds(preds, labels, indices):
         split_acc.append(accuracy(preds[idx_split], y_split[idx_split]))
 
     return split_loss, split_acc
+
+
+class DataGenerator(Sequence):
+    """Generates data for Keras
+    Sequence based data generator. Suitable for building data generator for training and prediction.
+    
+    TODO: assert shapes for timestamps
+    
+    """
+    def __init__(self, adj, data, seq_length: int = 32, target_index: int = 0, target_distance: int = 1,
+                 to_fit: bool = True, batch_size: int = 1, shuffle: bool = True):
+        """Initialization
+        :param to_fit: True to return X and y, False to return X only
+        :param batch_size: batch size at each iteration
+        """
+        self.adj = adj
+        self.data = data
+        self.seq_length = seq_length
+        self.target_index = target_index
+        self.target_distance = target_distance
+        self.to_fit = to_fit
+        self.batch_size = batch_size
+        self.shuffle = shuffle
+
+        self.max = int(np.floor((self.data.shape[1] - self.seq_length) / self.batch_size)) - 1 - self.target_distance
+        
+        self.n = 0
+        self.indices = list(range(self.__len__() + self.target_distance))
+
+    def get_input_batch(self, index):
+        return np.concatenate([
+            self.data[:, index * self.batch_size + batch: index * self.batch_size + batch + self.seq_length]
+            for batch in range(self.batch_size)
+        ], axis=0)
+
+    def get_output_batch(self, index):
+        return np.concatenate([
+            self.data[:, index * self.batch_size + batch + self.seq_length + self.target_distance]
+            for batch in range(self.batch_size)
+        ], axis=0)
+
+    def on_epoch_end(self):
+        if self.shuffle:
+            np.random.shuffle(self.indices)    
+
+    def __len__(self):
+        return self.max
+
+    def __next__(self):
+        if self.n >= self.max:
+            self.n = 0
+        result = self.__getitem__(self.n)
+        self.n += 1
+        return result
+
+    def __getitem__(self, index):
+        """Generate one batch of data
+        :param index: index of the batch
+        :return: X and y when fitting. X only when predicting
+        """
+        data = self.get_input_batch(self.indices[index])
+        output = self.get_output_batch(self.indices[index])
+        
+        if self.to_fit:
+            return (data, self.adj), output[:,:,self.target_index]
+        else:
+            return (data, self.adj)
